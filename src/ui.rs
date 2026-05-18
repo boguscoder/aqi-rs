@@ -88,15 +88,15 @@ pub(crate) fn render_ui(
                 .build();
 
             let mut s1: String<64> = String::new();
-            let _ = write!(s1, "PM 1.0: {} µg/m³", frame.pm1_0_atm);
+            let _ = write!(s1, "PM 1.0: {} µg/m³    ", frame.pm1_0_atm);
             let _ = Text::new(&s1, Point::new(10, 70), value_style).draw(&mut display);
 
             let mut s2: String<64> = String::new();
-            let _ = write!(s2, "PM 2.5: {} µg/m³", frame.pm2_5_atm);
+            let _ = write!(s2, "PM 2.5: {} µg/m³    ", frame.pm2_5_atm);
             let _ = Text::new(&s2, Point::new(10, 100), alert_style).draw(&mut display);
 
             let mut s3: String<64> = String::new();
-            let _ = write!(s3, "PM 10:  {} µg/m³", frame.pm10_atm);
+            let _ = write!(s3, "PM 10:  {} µg/m³    ", frame.pm10_atm);
             let _ = Text::new(&s3, Point::new(10, 130), value_style).draw(&mut display);
         }
         ViewMode::LastHour => {
