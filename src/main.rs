@@ -21,7 +21,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 // Duty cycle constants
 const SLEEP_MINUTES: u64 = 10;
-const ACTIVE_HOURS: u64 = 2;
+const ACTIVE_MINUTES: u64 = 120;
 // History constants
 pub(crate) const HISTORY_HOURS: usize = 24;
 pub(crate) const SAMPLE_INTERVAL_SECS: u64 = 5;
@@ -77,28 +77,28 @@ fn main() -> ! {
         let now = Instant::now();
         let elapsed_secs = (now - cycle_start).as_secs();
 
-        // Duty cycle: sleep after ACTIVE_HOURS
-        if (elapsed_secs / 3600) >= ACTIVE_HOURS {
+        // Button polling
+        let current_button_state = button.is_high();
+        if last_button_state && !current_button_state {
+            current_view = current_view.next();
+            force_redraw = true;
+        }
+        last_button_state = current_button_state;
+
+        // Duty cycle
+        if (elapsed_secs / 60) >= ACTIVE_MINUTES {
             if sensor_active {
                 let _ = pms.sleep();
                 sensor_active = false;
                 set_backlight(1);
             }
-            if elapsed_secs >= (ACTIVE_HOURS * 3600 + SLEEP_MINUTES * 60) {
+            if elapsed_secs >= (ACTIVE_MINUTES * 60 + SLEEP_MINUTES * 60) {
                 let _ = pms.wake();
                 sensor_active = true;
                 set_backlight(BACKLIGHT_BRIGHTNESS);
                 cycle_start = now;
             }
         } else {
-            // Button polling
-            let current_button_state = button.is_high();
-            if last_button_state && !current_button_state {
-                current_view = current_view.next();
-                force_redraw = true;
-            }
-            last_button_state = current_button_state;
-
             if let Ok(frame) = pms.read() {
                 let mut sample_ready = false;
                 if (now - last_sample_time).as_secs() >= SAMPLE_INTERVAL_SECS {

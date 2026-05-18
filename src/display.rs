@@ -1,4 +1,3 @@
-use display_interface_spi::SPIInterface;
 use embedded_graphics::{
     draw_target::DrawTarget,
     geometry::{OriginDimensions, Point, Size},
@@ -15,12 +14,13 @@ use esp_hal::{
     },
     spi::master::{Config as SpiConfig, Spi},
 };
-use mipidsi::{
-    models::ST7789, options::ColorInversion, options::Orientation, options::Rotation, Builder,
-};
+use mipidsi::interface::SpiInterface;
+use mipidsi::models::ST7789;
+use mipidsi::options::{ColorInversion, Orientation, Rotation};
+use mipidsi::Builder;
 
 pub(crate) type Display<'d> = mipidsi::Display<
-    SPIInterface<ExclusiveDevice<Spi<'d, esp_hal::Blocking>, Output<'d>, Delay>, Output<'d>>,
+    SpiInterface<'d, ExclusiveDevice<Spi<'d, esp_hal::Blocking>, Output<'d>, Delay>, Output<'d>>,
     ST7789,
     Output<'d>,
 >;
@@ -118,17 +118,12 @@ pub(crate) fn init_display<'d>(config: DisplayConfig<'d>, delay: &mut Delay) -> 
         .expect("Failed to init SPI")
         .with_sck(config.sclk)
         .with_mosi(config.mosi);
-    let spi_device = ExclusiveDevice::new(
-        spi,
-        Output::new(config.cs, Level::High, OutputConfig::default()),
-        *delay,
-    )
-    .unwrap();
+    let cs = Output::new(config.cs, Level::High, OutputConfig::default());
+    let dc = Output::new(config.dc, Level::Low, OutputConfig::default());
 
-    let di = SPIInterface::new(
-        spi_device,
-        Output::new(config.dc, Level::Low, OutputConfig::default()),
-    );
+    let spi_device = ExclusiveDevice::new(spi, cs, Delay::new()).unwrap();
+    static mut DISPLAY_BUFFER: [u8; 1024] = [0; 1024];
+    let di = SpiInterface::new(spi_device, dc, unsafe { &mut DISPLAY_BUFFER });
 
     let mut display = Builder::new(ST7789, di)
         .display_size(240, 320)
