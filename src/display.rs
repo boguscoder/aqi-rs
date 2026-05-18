@@ -14,10 +14,13 @@ use esp_hal::{
     },
     spi::master::{Config as SpiConfig, Spi},
 };
-use mipidsi::interface::SpiInterface;
-use mipidsi::models::ST7789;
-use mipidsi::options::{ColorInversion, Orientation, Rotation};
-use mipidsi::Builder;
+use mipidsi::{
+    interface::SpiInterface,
+    models::ST7789,
+    options::{ColorInversion, Orientation, Rotation},
+    Builder,
+};
+use static_cell::StaticCell;
 
 pub(crate) type Display<'d> = mipidsi::Display<
     SpiInterface<'d, ExclusiveDevice<Spi<'d, esp_hal::Blocking>, Output<'d>, Delay>, Output<'d>>,
@@ -122,8 +125,8 @@ pub(crate) fn init_display<'d>(config: DisplayConfig<'d>, delay: &mut Delay) -> 
     let dc = Output::new(config.dc, Level::Low, OutputConfig::default());
 
     let spi_device = ExclusiveDevice::new(spi, cs, Delay::new()).unwrap();
-    static mut DISPLAY_BUFFER: [u8; 1024] = [0; 1024];
-    let di = SpiInterface::new(spi_device, dc, unsafe { &mut DISPLAY_BUFFER });
+    static DISPLAY_BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
+    let di = SpiInterface::new(spi_device, dc, DISPLAY_BUFFER.init([0; 1024]));
 
     let mut display = Builder::new(ST7789, di)
         .display_size(240, 320)
