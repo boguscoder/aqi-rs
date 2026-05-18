@@ -5,7 +5,7 @@ mod display;
 mod sensor;
 mod ui;
 
-use crate::display::{init_display, DisplayConfig};
+use crate::display::{init_display, set_backlight, DisplayConfig};
 use crate::sensor::init_sensor;
 use crate::ui::{render_ui, ViewMode};
 use embedded_hal::delay::DelayNs;
@@ -26,6 +26,7 @@ const ACTIVE_HOURS: u64 = 2;
 pub(crate) const HISTORY_HOURS: usize = 24;
 pub(crate) const SAMPLE_INTERVAL_SECS: u64 = 5;
 pub(crate) const MAX_HISTORY: usize = HISTORY_HOURS * 60 * (60 / SAMPLE_INTERVAL_SECS as usize);
+pub(crate) const BACKLIGHT_BRIGHTNESS: u8 = 10;
 
 static HISTORY_CELL: StaticCell<Vec<u16, MAX_HISTORY>> = StaticCell::new();
 
@@ -52,6 +53,7 @@ fn main() -> ! {
             rst: peripherals.GPIO21.into(),
             bl: peripherals.GPIO22.into(),
             ledc: peripherals.LEDC,
+            backlight_duty: BACKLIGHT_BRIGHTNESS,
         },
         &mut delay,
     );
@@ -80,18 +82,15 @@ fn main() -> ! {
             if sensor_active {
                 let _ = pms.sleep();
                 sensor_active = false;
+                set_backlight(1);
             }
             if elapsed_secs >= (ACTIVE_HOURS * 3600 + SLEEP_MINUTES * 60) {
                 let _ = pms.wake();
                 sensor_active = true;
+                set_backlight(BACKLIGHT_BRIGHTNESS);
                 cycle_start = now;
             }
         } else {
-            if !sensor_active {
-                let _ = pms.wake();
-                sensor_active = true;
-            }
-
             // Button polling
             let current_button_state = button.is_high();
             if last_button_state && !current_button_state {

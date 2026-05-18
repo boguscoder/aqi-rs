@@ -56,8 +56,6 @@ impl<'a, 'd> OriginDimensions for LandscapeDisplay<'a, 'd> {
     }
 }
 
-const BACKLIGHT_BRIGHTNESS: u8 = 10;
-
 pub(crate) struct DisplayConfig<'d> {
     pub spi: esp_hal::peripherals::SPI2<'d>,
     pub mosi: AnyPin<'d>,
@@ -67,6 +65,18 @@ pub(crate) struct DisplayConfig<'d> {
     pub rst: AnyPin<'d>,
     pub bl: AnyPin<'d>,
     pub ledc: esp_hal::peripherals::LEDC<'d>,
+    pub backlight_duty: u8,
+}
+
+static mut BACKLIGHT_CHANNEL: Option<channel::Channel<'static, LowSpeed>> = None;
+
+pub(crate) fn set_backlight(duty: u8) {
+    unsafe {
+        let channel_ptr = &raw mut BACKLIGHT_CHANNEL;
+        if let Some(channel) = (*channel_ptr).as_mut() {
+            let _ = channel.set_duty(duty);
+        }
+    }
 }
 
 pub(crate) fn init_display<'d>(config: DisplayConfig<'d>, delay: &mut Delay) -> Display<'d> {
@@ -89,10 +99,14 @@ pub(crate) fn init_display<'d>(config: DisplayConfig<'d>, delay: &mut Delay) -> 
     channel
         .configure(channel::config::Config {
             timer: &timer,
-            duty_pct: BACKLIGHT_BRIGHTNESS,
+            duty_pct: config.backlight_duty,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .unwrap();
+
+    unsafe {
+        BACKLIGHT_CHANNEL = Some(core::mem::transmute_copy(&channel));
+    }
 
     let mut rst = Output::new(config.rst, Level::Low, OutputConfig::default());
     delay.delay_ms(100u32);
