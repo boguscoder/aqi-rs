@@ -1,11 +1,9 @@
 #![no_std]
 #![no_main]
 
-mod display;
 mod sensor;
 mod ui;
 
-use crate::display::{init_display, set_backlight, DisplayConfig};
 use crate::sensor::init_sensor;
 use crate::ui::{render_ui, ViewMode};
 use embedded_hal::delay::DelayNs;
@@ -17,6 +15,7 @@ use esp_hal::{
 };
 use heapless::Vec;
 use static_cell::StaticCell;
+use waveshare_display::{init_display, set_backlight, DisplayConfig};
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // Duty cycle constants

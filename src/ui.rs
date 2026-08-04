@@ -1,4 +1,3 @@
-use crate::display::{Display, LandscapeDisplay};
 use crate::{HISTORY_HOURS, MAX_HISTORY, SAMPLE_INTERVAL_SECS};
 use core::fmt::Write;
 use embedded_graphics::{
@@ -12,6 +11,7 @@ use embedded_graphics::{
 };
 use heapless::String;
 use pmsx003::OutputFrame;
+use waveshare_display::{Display, LandscapeDisplay};
 
 const GRAPH_TOP: i32 = 50;
 const GRAPH_BOTTOM: i32 = 160;
