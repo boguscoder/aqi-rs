@@ -6,6 +6,8 @@ mod ui;
 
 use crate::sensor::init_sensor;
 use crate::ui::{render_ui, ViewMode};
+use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
+use embedded_graphics_framebuf::FrameBuf;
 use embedded_hal::delay::DelayNs;
 use esp_backtrace as _;
 use esp_hal::{
@@ -14,24 +16,25 @@ use esp_hal::{
     time::Instant,
 };
 use heapless::Vec;
-use static_cell::StaticCell;
-use waveshare_display::{init_display, set_backlight, DisplayConfig};
+use waveshare_display::{
+    init_display, set_backlight, DisplayConfig, LandscapeDisplay, DISPLAY_HEIGHT, DISPLAY_WIDTH,
+};
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // Duty cycle constants
 const SLEEP_MINUTES: u64 = 10;
 const ACTIVE_MINUTES: u64 = 120;
 // History constants
-pub(crate) const HISTORY_HOURS: usize = 24;
-pub(crate) const SAMPLE_INTERVAL_SECS: u64 = 5;
-pub(crate) const MAX_HISTORY: usize = HISTORY_HOURS * 60 * (60 / SAMPLE_INTERVAL_SECS as usize);
-pub(crate) const BACKLIGHT_BRIGHTNESS: u8 = 10;
-
-static HISTORY_CELL: StaticCell<Vec<u16, MAX_HISTORY>> = StaticCell::new();
+const HISTORY_HOURS: usize = 24;
+const SAMPLE_INTERVAL_SECS: u64 = 5;
+const MAX_HISTORY: usize = HISTORY_HOURS * 60 * (60 / SAMPLE_INTERVAL_SECS as usize);
+const BACKLIGHT_BRIGHTNESS: u8 = 10;
 
 #[esp_hal::main]
 fn main() -> ! {
-    let history: &'static mut Vec<u16, MAX_HISTORY> = HISTORY_CELL.init(Vec::new());
+    let mut history: Vec<u16, MAX_HISTORY> = Vec::new();
+    let framebuffer: [Rgb565; (DISPLAY_WIDTH * DISPLAY_HEIGHT) as usize] =
+        [Rgb565::BLACK; (DISPLAY_WIDTH * DISPLAY_HEIGHT) as usize];
 
     let config = esp_hal::Config::default();
     let peripherals = esp_hal::init(config);
@@ -56,6 +59,10 @@ fn main() -> ! {
         },
         &mut delay,
     );
+
+    let mut hardware_display = LandscapeDisplay { base: &mut display };
+
+    let mut fbuf = FrameBuf::new(framebuffer, DISPLAY_WIDTH as usize, DISPLAY_HEIGHT as usize);
 
     let mut pms = init_sensor(
         peripherals.UART1,
@@ -97,25 +104,24 @@ fn main() -> ! {
                 set_backlight(BACKLIGHT_BRIGHTNESS);
                 cycle_start = now;
             }
-        } else {
-            if let Ok(frame) = pms.read() {
-                let mut sample_ready = false;
-                if (now - last_sample_time).as_secs() >= SAMPLE_INTERVAL_SECS {
-                    if history.is_full() {
-                        history.remove(0);
-                    }
-                    let _ = history.push(frame.pm2_5_atm);
-                    last_sample_time = now;
-                    sample_ready = true;
+        } else if let Ok(frame) = pms.read() {
+            let mut sample_ready = false;
+            if (now - last_sample_time).as_secs() >= SAMPLE_INTERVAL_SECS {
+                if history.is_full() {
+                    history.remove(0);
                 }
+                let _ = history.push(frame.pm2_5_atm);
+                last_sample_time = now;
+                sample_ready = true;
+            }
 
-                if force_redraw || sample_ready {
-                    render_ui(&mut display, &frame, history, current_view, force_redraw);
-                    force_redraw = false;
-                }
+            if force_redraw || sample_ready {
+                render_ui(&mut fbuf, &frame, &history, current_view, force_redraw);
+                force_redraw = false;
             }
         }
 
+        hardware_display.draw_iter(&fbuf).unwrap();
         delay.delay_ms(100u32);
     }
 }

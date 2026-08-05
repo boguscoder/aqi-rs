@@ -11,7 +11,6 @@ use embedded_graphics::{
 };
 use heapless::String;
 use pmsx003::OutputFrame;
-use waveshare_display::{Display, LandscapeDisplay};
 
 const GRAPH_TOP: i32 = 50;
 const GRAPH_BOTTOM: i32 = 160;
@@ -24,7 +23,7 @@ const COLOR_MODERATE: Rgb565 = Rgb565::YELLOW;
 const COLOR_SENSITIVE: Rgb565 = Rgb565::new(31, 38, 0); // Orange-ish in RGB565
 const COLOR_UNHEALTHY: Rgb565 = Rgb565::RED;
 
-fn get_aqi_color(pm2_5: u16) -> Rgb565 {
+fn get_aqi_color(pm2_5: i32) -> Rgb565 {
     match pm2_5 {
         0..=12 => COLOR_GOOD,
         13..=35 => COLOR_MODERATE,
@@ -52,15 +51,15 @@ impl ViewMode {
     }
 }
 
-pub(crate) fn render_ui(
-    raw_display: &mut Display,
+pub fn render_ui<T>(
+    display: &mut T,
     frame: &OutputFrame,
     history: &[u16],
     mode: ViewMode,
     force_redraw: bool,
-) {
-    let mut display = LandscapeDisplay { base: raw_display };
-
+) where
+    T: DrawTarget<Color = Rgb565>,
+{
     let title_style = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
         .text_color(Rgb565::CYAN)
@@ -73,8 +72,7 @@ pub(crate) fn render_ui(
 
     match mode {
         ViewMode::Live => {
-            let _ = Text::new("Air Quality Monitor", Point::new(10, 30), title_style)
-                .draw(&mut display);
+            let _ = Text::new("Air Quality Monitor", Point::new(10, 30), title_style).draw(display);
 
             let value_style = MonoTextStyleBuilder::new()
                 .font(&FONT_10X20)
@@ -83,25 +81,25 @@ pub(crate) fn render_ui(
                 .build();
             let alert_style = MonoTextStyleBuilder::new()
                 .font(&FONT_10X20)
-                .text_color(get_aqi_color(frame.pm2_5_atm))
+                .text_color(get_aqi_color(frame.pm2_5_atm.into()))
                 .background_color(Rgb565::BLACK)
                 .build();
 
             let mut s1: String<64> = String::new();
             let _ = write!(s1, "PM 1.0: {} µg/m³    ", frame.pm1_0_atm);
-            let _ = Text::new(&s1, Point::new(10, 70), value_style).draw(&mut display);
+            let _ = Text::new(&s1, Point::new(10, 70), value_style).draw(display);
 
             let mut s2: String<64> = String::new();
             let _ = write!(s2, "PM 2.5: {} µg/m³    ", frame.pm2_5_atm);
-            let _ = Text::new(&s2, Point::new(10, 100), alert_style).draw(&mut display);
+            let _ = Text::new(&s2, Point::new(10, 100), alert_style).draw(display);
 
             let mut s3: String<64> = String::new();
             let _ = write!(s3, "PM 10:  {} µg/m³    ", frame.pm10_atm);
-            let _ = Text::new(&s3, Point::new(10, 130), value_style).draw(&mut display);
+            let _ = Text::new(&s3, Point::new(10, 130), value_style).draw(display);
         }
         ViewMode::LastHour => {
             draw_graph_view(
-                &mut display,
+                display,
                 history,
                 "Last Hour",
                 60, // 60 minutes
@@ -111,7 +109,7 @@ pub(crate) fn render_ui(
         }
         ViewMode::LastDay => {
             draw_graph_view(
-                &mut display,
+                display,
                 history,
                 "Last 24h",
                 HISTORY_HOURS * 60,
@@ -120,19 +118,21 @@ pub(crate) fn render_ui(
             );
         }
         ViewMode::Hourly => {
-            draw_hourly_view(&mut display, history, title_style, force_redraw);
+            draw_hourly_view(display, history, title_style, force_redraw);
         }
     }
 }
 
-fn draw_graph_view(
-    display: &mut LandscapeDisplay,
+fn draw_graph_view<T>(
+    display: &mut T,
     history: &[u16],
     title: &str,
     window_minutes: usize,
     title_style: MonoTextStyle<Rgb565>,
     force_redraw: bool,
-) {
+) where
+    T: DrawTarget<Color = Rgb565>,
+{
     if force_redraw {
         let _ = Text::new(title, Point::new(10, 30), title_style).draw(display);
     }
@@ -162,12 +162,11 @@ fn draw_graph_view(
     let history_window = &history[start_in_history..];
     let window_len = history_window.len();
 
-    let actual_max = history_window.iter().max().copied().unwrap_or(0);
-    let max_val = actual_max.max(1);
+    let max_val = history_window.iter().max().copied().unwrap_or(1);
 
     let mut s: String<16> = String::new();
-    let _ = write!(s, "max: {}", actual_max);
-    let _ = Text::new(&s, Point::new(240, 45), value_style).draw(display);
+    let _ = write!(s, "max: {}", max_val);
+    let _ = Text::new(&s, Point::new(240, 30), value_style).draw(display);
 
     // Timeline is fixed to window_samples, right-justified
     let shift = window_samples.saturating_sub(window_len);
@@ -181,17 +180,14 @@ fn draw_graph_view(
 
         let avg_val = if start_idx < window_len && end_idx > start_idx {
             let bucket = &history_window[start_idx..end_idx.min(window_len)];
-            let mut sum = 0u32;
-            for &val in bucket {
-                sum += u32::from(val);
-            }
-            (sum / bucket.len() as u32) as u16
+            let sum: i32 = bucket.iter().map(|&x| i32::from(x)).sum();
+            sum / bucket.len() as i32
         } else {
             0
         };
 
         let x = GRAPH_LEFT + x_offset;
-        let scaled_val = (i32::from(avg_val) * GRAPH_HEIGHT) / i32::from(max_val);
+        let scaled_val = (avg_val * GRAPH_HEIGHT) / i32::from(max_val);
         let y = GRAPH_BOTTOM - scaled_val;
         let color = get_aqi_color(avg_val);
 
@@ -207,12 +203,14 @@ fn draw_graph_view(
     }
 }
 
-fn draw_hourly_view(
-    display: &mut LandscapeDisplay,
+fn draw_hourly_view<T>(
+    display: &mut T,
     history: &[u16],
     title_style: MonoTextStyle<Rgb565>,
     force_redraw: bool,
-) {
+) where
+    T: DrawTarget<Color = Rgb565>,
+{
     if force_redraw {
         let _ = Text::new("24h Hourly", Point::new(10, 30), title_style).draw(display);
     }
@@ -228,12 +226,11 @@ fn draw_hourly_view(
         return;
     }
 
-    let actual_max = history.iter().max().copied().unwrap_or(0);
-    let max_val = actual_max.max(1);
+    let max_val = history.iter().max().copied().unwrap_or(1);
 
     let mut s: String<16> = String::new();
-    let _ = write!(s, "max: {}", actual_max);
-    let _ = Text::new(&s, Point::new(240, 45), value_style).draw(display);
+    let _ = write!(s, "max: {}", max_val);
+    let _ = Text::new(&s, Point::new(240, 30), value_style).draw(display);
 
     const SAMPLES_PER_HOUR: usize = MAX_HISTORY / HISTORY_HOURS;
     let current_len = history.len();
@@ -248,22 +245,20 @@ fn draw_hourly_view(
 
         let avg_val = if start_idx < current_len && end_idx > start_idx {
             let bucket = &history[start_idx..end_idx.min(current_len)];
-            let mut sum = 0u32;
-            for &val in bucket {
-                sum += u32::from(val);
-            }
-            (sum / bucket.len() as u32) as u16
+            let sum: i32 = bucket.iter().map(|&x| i32::from(x)).sum();
+            sum / bucket.len() as i32
         } else {
             0
         };
 
-        let x_center = 15 + (h as i32 * 12);
-        let scaled_val = (i32::from(avg_val) * 100) / i32::from(max_val);
-        let y = 160 - scaled_val;
+        const BAR_HALF_WIDTH: i32 = 5;
+        let x_center = 25 + h as i32 * 12;
+        let scaled_val = (avg_val * 100) / i32::from(max_val);
+        let y = GRAPH_BOTTOM - scaled_val;
         let color = get_aqi_color(avg_val);
 
-        for x in (x_center - 4)..(x_center + 4) {
-            let _ = Line::new(Point::new(x, 160), Point::new(x, y))
+        for x in (x_center - BAR_HALF_WIDTH)..(x_center + BAR_HALF_WIDTH) {
+            let _ = Line::new(Point::new(x, GRAPH_BOTTOM), Point::new(x, y))
                 .into_styled(PrimitiveStyle::with_stroke(color, 1))
                 .draw(display);
             let _ = Line::new(Point::new(x, y - 1), Point::new(x, 50))
