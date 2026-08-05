@@ -83,8 +83,6 @@ async fn sensor_task(mut pms: Pms5003) {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    esp_alloc::heap_allocator!(size: 96 * 1024);
-
     let config = esp_hal::Config::default();
     let peripherals = esp_hal::init(config);
 
