@@ -1,3 +1,4 @@
+use crate::sensor::PmsReading;
 use crate::{HISTORY_HOURS, MAX_HISTORY, SAMPLE_INTERVAL_SECS};
 use core::fmt::Write;
 use embedded_graphics::{
@@ -10,7 +11,6 @@ use embedded_graphics::{
     Drawable,
 };
 use heapless::String;
-use pmsx003::OutputFrame;
 
 const GRAPH_TOP: i32 = 50;
 const GRAPH_BOTTOM: i32 = 160;
@@ -53,7 +53,7 @@ impl ViewMode {
 
 pub fn render_ui<T>(
     display: &mut T,
-    frame: &OutputFrame,
+    frame: &PmsReading,
     history: &[u16],
     mode: ViewMode,
     force_redraw: bool,
@@ -94,7 +94,7 @@ pub fn render_ui<T>(
             let _ = Text::new(&s2, Point::new(10, 100), alert_style).draw(display);
 
             let mut s3: String<64> = String::new();
-            let _ = write!(s3, "PM 10:  {} µg/m³    ", frame.pm10_atm);
+            let _ = write!(s3, "PM 10:  {} µg/m³    ", frame.pm10_0_atm);
             let _ = Text::new(&s3, Point::new(10, 130), value_style).draw(display);
         }
         ViewMode::LastHour => {
@@ -163,10 +163,11 @@ fn draw_graph_view<T>(
     let window_len = history_window.len();
 
     let max_val = history_window.iter().max().copied().unwrap_or(1);
+    let now_val = history.last().copied().unwrap_or(0);
 
     let mut s: String<16> = String::new();
-    let _ = write!(s, "max: {}", max_val);
-    let _ = Text::new(&s, Point::new(240, 30), value_style).draw(display);
+    let _ = write!(s, "now: {} max: {}", now_val, max_val);
+    let _ = Text::new(&s, Point::new(160, 30), value_style).draw(display);
 
     // Timeline is fixed to window_samples, right-justified
     let shift = window_samples.saturating_sub(window_len);
@@ -227,10 +228,11 @@ fn draw_hourly_view<T>(
     }
 
     let max_val = history.iter().max().copied().unwrap_or(1);
+    let now_val = history.last().copied().unwrap_or(0);
 
     let mut s: String<16> = String::new();
-    let _ = write!(s, "max: {}", max_val);
-    let _ = Text::new(&s, Point::new(240, 30), value_style).draw(display);
+    let _ = write!(s, "now: {} max: {}", now_val, max_val);
+    let _ = Text::new(&s, Point::new(160, 30), value_style).draw(display);
 
     const SAMPLES_PER_HOUR: usize = MAX_HISTORY / HISTORY_HOURS;
     let current_len = history.len();
