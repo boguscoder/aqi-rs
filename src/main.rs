@@ -5,13 +5,14 @@ mod sensor;
 mod ui;
 
 use crate::ui::{render_ui, ViewMode};
-use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_executor::Spawner;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
-use embassy_time::{Duration, Timer};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_time::{with_timeout, Duration, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_graphics_framebuf::FrameBuf;
 use esp_backtrace as _;
+use esp_hal::ledc::channel::ChannelIFace;
+use esp_hal::ledc::{channel, LowSpeed};
 use esp_hal::{
     delay::Delay,
     gpio::{Input, InputConfig, Pull},
@@ -22,28 +23,50 @@ use esp_hal::{interrupt::software::SoftwareInterruptControl, timer::timg::TimerG
 use heapless::Vec;
 use sensor::{Pms5003, PmsReading};
 use waveshare_display::{
-    init_display, set_backlight, DisplayConfig, LandscapeDisplay, DISPLAY_HEIGHT, DISPLAY_WIDTH,
+    init_display, setup_backlight, DisplayConfig, LandscapeDisplay, DISPLAY_HEIGHT, DISPLAY_WIDTH,
 };
-
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // Duty cycle constants
 const SLEEP_MINUTES: u64 = 10;
-const ACTIVE_MINUTES: u64 = 120;
+const ACTIVE_MINUTES: u64 = 60;
+const BACKLIGHT_BRIGHTNESS: u8 = 10;
+const DIMMED_BRIGHTNESS: u8 = 0;
+const BACKLIGHT_TIMEOUT_SECS: u64 = 30;
 // History constants
 const HISTORY_HOURS: usize = 24;
 const SAMPLE_INTERVAL_SECS: u64 = 5;
 const MAX_HISTORY: usize = HISTORY_HOURS * 60 * (60 / SAMPLE_INTERVAL_SECS as usize);
-const BACKLIGHT_BRIGHTNESS: u8 = 10;
 
-static BUTTON_PRESSED: AtomicBool = AtomicBool::new(false);
-static SENSOR_CHANNEL: Channel<CriticalSectionRawMutex, PmsReading, 2> = Channel::new();
+static BUTTON_PRESSED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static SENSOR_CHANNEL: Signal<CriticalSectionRawMutex, PmsReading> = Signal::new();
+static BACKLIGHT_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+#[embassy_executor::task]
+async fn backlight_task(backlight: channel::Channel<'static, LowSpeed>) {
+    loop {
+        let result = with_timeout(
+            Duration::from_secs(BACKLIGHT_TIMEOUT_SECS),
+            BACKLIGHT_WAKE.wait(),
+        )
+        .await;
+
+        if result.is_ok() {
+            backlight.set_duty(BACKLIGHT_BRIGHTNESS).unwrap();
+        } else {
+            backlight.set_duty(DIMMED_BRIGHTNESS).unwrap();
+            BACKLIGHT_WAKE.wait().await;
+            backlight.set_duty(BACKLIGHT_BRIGHTNESS).unwrap();
+        }
+    }
+}
 
 #[embassy_executor::task]
 async fn button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_falling_edge().await;
-        BUTTON_PRESSED.store(true, Ordering::Relaxed);
+        BUTTON_PRESSED.signal(());
+        BACKLIGHT_WAKE.signal(());
         // Debounce the press
         Timer::after(Duration::from_millis(50)).await;
         while button.is_low() {
@@ -62,21 +85,22 @@ async fn sensor_task(mut pms: Pms5003) {
     loop {
         let elapsed_secs = (Instant::now() - cycle_start).as_secs();
 
-        if (elapsed_secs / 60) >= ACTIVE_MINUTES {
-            if sensor_active {
+        if sensor_active {
+            if (elapsed_secs / 60) >= ACTIVE_MINUTES {
                 pms.sleep().await.ok();
                 sensor_active = false;
-                set_backlight(1);
+            } else if let Some(frame) = pms.read().await {
+                SENSOR_CHANNEL.signal(frame);
             }
-            if elapsed_secs >= (ACTIVE_MINUTES * 60 + SLEEP_MINUTES * 60) {
+        } else {
+            let sleep_duration = (ACTIVE_MINUTES * 60) + (SLEEP_MINUTES * 60);
+            if elapsed_secs >= sleep_duration {
                 pms.wake().await.ok();
                 sensor_active = true;
-                set_backlight(BACKLIGHT_BRIGHTNESS);
                 cycle_start = Instant::now();
+            } else {
+                Timer::after(Duration::from_secs(1)).await;
             }
-            Timer::after(Duration::from_secs(1)).await;
-        } else if let Some(frame) = pms.read().await {
-            SENSOR_CHANNEL.send(frame).await;
         }
     }
 }
@@ -103,8 +127,12 @@ async fn main(spawner: Spawner) -> ! {
             .into_async(),
     );
 
+    setup_backlight!(peripherals.LEDC, peripherals.GPIO22, backlight_channel);
+    backlight_channel.set_duty(BACKLIGHT_BRIGHTNESS).unwrap();
+
     spawner.spawn(button_task(button).unwrap());
     spawner.spawn(sensor_task(pms).unwrap());
+    spawner.spawn(backlight_task(backlight_channel).unwrap());
 
     let mut delay = Delay::new();
     let mut display = init_display(
@@ -115,9 +143,6 @@ async fn main(spawner: Spawner) -> ! {
             cs: peripherals.GPIO14.into(),
             dc: peripherals.GPIO15.into(),
             rst: peripherals.GPIO21.into(),
-            bl: peripherals.GPIO22.into(),
-            ledc: peripherals.LEDC,
-            backlight_duty: BACKLIGHT_BRIGHTNESS,
         },
         &mut delay,
     );
@@ -133,18 +158,22 @@ async fn main(spawner: Spawner) -> ! {
     let mut force_redraw = true;
 
     let mut last_sample_time = Instant::now();
-    let mut last_frame = None;
+    let mut last_frame = Some(PmsReading {
+        pm1_0_atm: 0,
+        pm2_5_atm: 0,
+        pm10_0_atm: 0,
+    });
 
     loop {
         let now = Instant::now();
         let mut sample_ready = false;
 
-        if BUTTON_PRESSED.swap(false, Ordering::Relaxed) {
+        if let Some(()) = BUTTON_PRESSED.try_take() {
             current_view = current_view.next();
             force_redraw = true;
         }
 
-        if let Ok(frame) = SENSOR_CHANNEL.try_receive() {
+        if let Some(frame) = SENSOR_CHANNEL.try_take() {
             if (now - last_sample_time).as_secs() >= SAMPLE_INTERVAL_SECS {
                 if history.is_full() {
                     history.remove(0);
