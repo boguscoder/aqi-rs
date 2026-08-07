@@ -36,7 +36,6 @@ fn get_aqi_color(pm2_5: i32) -> Rgb565 {
 pub(crate) enum ViewMode {
     Live,
     LastHour,
-    LastDay,
     Hourly,
 }
 
@@ -44,8 +43,7 @@ impl ViewMode {
     pub fn next(self) -> Self {
         match self {
             Self::Live => Self::LastHour,
-            Self::LastHour => Self::LastDay,
-            Self::LastDay => Self::Hourly,
+            Self::LastHour => Self::Hourly,
             Self::Hourly => Self::Live,
         }
     }
@@ -107,16 +105,7 @@ pub fn render_ui<T>(
                 force_redraw,
             );
         }
-        ViewMode::LastDay => {
-            draw_graph_view(
-                display,
-                history,
-                "Last 24h",
-                HISTORY_HOURS * 60,
-                title_style,
-                force_redraw,
-            );
-        }
+
         ViewMode::Hourly => {
             draw_hourly_view(display, history, title_style, force_redraw);
         }
@@ -223,7 +212,7 @@ fn draw_hourly_view<T>(
         .build();
 
     if history.is_empty() {
-        let _ = Text::new("No data", Point::new(10, 70), value_style).draw(display);
+        let _ = Text::new("Collecting data...", Point::new(10, 70), value_style).draw(display);
         return;
     }
 
