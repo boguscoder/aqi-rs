@@ -55,7 +55,8 @@ pub fn render_ui<T>(
     history: &[u16],
     mode: ViewMode,
     force_redraw: bool,
-) where
+) -> Result<(), T::Error>
+where
     T: DrawTarget<Color = Rgb565>,
 {
     let title_style = MonoTextStyleBuilder::new()
@@ -65,51 +66,56 @@ pub fn render_ui<T>(
         .build();
 
     if force_redraw {
-        let _ = display.clear(Rgb565::BLACK);
+        display.clear(Rgb565::BLACK)?;
     }
 
     match mode {
-        ViewMode::Live => {
-            let _ = Text::new("Air Quality Monitor", Point::new(10, 30), title_style).draw(display);
-
-            let value_style = MonoTextStyleBuilder::new()
-                .font(&FONT_10X20)
-                .text_color(Rgb565::WHITE)
-                .background_color(Rgb565::BLACK)
-                .build();
-            let alert_style = MonoTextStyleBuilder::new()
-                .font(&FONT_10X20)
-                .text_color(get_aqi_color(frame.pm2_5_atm.into()))
-                .background_color(Rgb565::BLACK)
-                .build();
-
-            let mut s1: String<64> = String::new();
-            let _ = write!(s1, "PM 1.0: {} µg/m³    ", frame.pm1_0_atm);
-            let _ = Text::new(&s1, Point::new(10, 70), value_style).draw(display);
-
-            let mut s2: String<64> = String::new();
-            let _ = write!(s2, "PM 2.5: {} µg/m³    ", frame.pm2_5_atm);
-            let _ = Text::new(&s2, Point::new(10, 100), alert_style).draw(display);
-
-            let mut s3: String<64> = String::new();
-            let _ = write!(s3, "PM 10:  {} µg/m³    ", frame.pm10_0_atm);
-            let _ = Text::new(&s3, Point::new(10, 130), value_style).draw(display);
-        }
-        ViewMode::LastHour => {
-            draw_graph_view(
-                display,
-                history,
-                "Last Hour",
-                60, // 60 minutes
-                title_style,
-                force_redraw,
-            );
-        }
-
-        ViewMode::Hourly => {
-            draw_hourly_view(display, history, title_style, force_redraw);
-        }
+        ViewMode::Live => draw_live_view(display, frame, title_style),
+        ViewMode::LastHour => draw_graph_view(
+            display,
+            history,
+            "Last Hour",
+            60, // 60 minutes
+            title_style,
+            force_redraw,
+        ),
+        ViewMode::Hourly => draw_hourly_view(display, history, title_style, force_redraw),
     }
+}
+
+fn draw_live_view<T>(
+    display: &mut T,
+    frame: &PmsReading,
+    title_style: MonoTextStyle<'_, Rgb565>,
+) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    Text::new("Air Quality Monitor", Point::new(10, 30), title_style).draw(display)?;
+
+    let value_style = MonoTextStyleBuilder::new()
+        .font(&FONT_10X20)
+        .text_color(Rgb565::WHITE)
+        .background_color(Rgb565::BLACK)
+        .build();
+    let alert_style = MonoTextStyleBuilder::new()
+        .font(&FONT_10X20)
+        .text_color(get_aqi_color(frame.pm2_5_atm.into()))
+        .background_color(Rgb565::BLACK)
+        .build();
+
+    let mut s1: String<64> = String::new();
+    write!(s1, "PM 1.0: {} µg/m³    ", frame.pm1_0_atm).ok();
+    Text::new(&s1, Point::new(10, 70), value_style).draw(display)?;
+
+    let mut s2: String<64> = String::new();
+    write!(s2, "PM 2.5: {} µg/m³    ", frame.pm2_5_atm).ok();
+    Text::new(&s2, Point::new(10, 100), alert_style).draw(display)?;
+
+    let mut s3: String<64> = String::new();
+    write!(s3, "PM 10:  {} µg/m³    ", frame.pm10_0_atm).ok();
+    Text::new(&s3, Point::new(10, 130), value_style).draw(display)?;
+    Ok(())
 }
 
 fn draw_graph_view<T>(
@@ -119,11 +125,12 @@ fn draw_graph_view<T>(
     window_minutes: usize,
     title_style: MonoTextStyle<Rgb565>,
     force_redraw: bool,
-) where
+) -> Result<(), T::Error>
+where
     T: DrawTarget<Color = Rgb565>,
 {
     if force_redraw {
-        let _ = Text::new(title, Point::new(10, 30), title_style).draw(display);
+        Text::new(title, Point::new(10, 30), title_style).draw(display)?;
     }
 
     let value_style = MonoTextStyleBuilder::new()
@@ -133,13 +140,13 @@ fn draw_graph_view<T>(
         .build();
 
     if history.is_empty() {
-        let _ = Text::new(
+        Text::new(
             "Collecting data...",
             Point::new(GRAPH_LEFT, GRAPH_TOP + 20),
             value_style,
         )
-        .draw(display);
-        return;
+        .draw(display)?;
+        return Ok(());
     }
 
     let samples_per_min = 60 / SAMPLE_INTERVAL_SECS as usize;
@@ -155,8 +162,8 @@ fn draw_graph_view<T>(
     let now_val = history.last().copied().unwrap_or(0);
 
     let mut s: String<16> = String::new();
-    let _ = write!(s, "now: {} max: {}", now_val, max_val);
-    let _ = Text::new(&s, Point::new(160, 30), value_style).draw(display);
+    write!(s, "now: {} max: {}", now_val, max_val).ok();
+    Text::new(&s, Point::new(160, 30), value_style).draw(display)?;
 
     // Timeline is fixed to window_samples, right-justified
     let shift = window_samples.saturating_sub(window_len);
@@ -181,16 +188,17 @@ fn draw_graph_view<T>(
         let y = GRAPH_BOTTOM - scaled_val;
         let color = get_aqi_color(avg_val);
 
-        let _ = Line::new(Point::new(x, GRAPH_BOTTOM), Point::new(x, y))
+        Line::new(Point::new(x, GRAPH_BOTTOM), Point::new(x, y))
             .into_styled(PrimitiveStyle::with_stroke(color, 1))
-            .draw(display);
+            .draw(display)?;
 
         if y > GRAPH_TOP {
-            let _ = Line::new(Point::new(x, y - 1), Point::new(x, GRAPH_TOP))
+            Line::new(Point::new(x, y - 1), Point::new(x, GRAPH_TOP))
                 .into_styled(PrimitiveStyle::with_stroke(Rgb565::BLACK, 1))
-                .draw(display);
+                .draw(display)?;
         }
     }
+    Ok(())
 }
 
 fn draw_hourly_view<T>(
@@ -198,11 +206,12 @@ fn draw_hourly_view<T>(
     history: &[u16],
     title_style: MonoTextStyle<Rgb565>,
     force_redraw: bool,
-) where
+) -> Result<(), T::Error>
+where
     T: DrawTarget<Color = Rgb565>,
 {
     if force_redraw {
-        let _ = Text::new("24h Hourly", Point::new(10, 30), title_style).draw(display);
+        Text::new("24h Hourly", Point::new(10, 30), title_style).draw(display)?;
     }
 
     let value_style = MonoTextStyleBuilder::new()
@@ -212,16 +221,16 @@ fn draw_hourly_view<T>(
         .build();
 
     if history.is_empty() {
-        let _ = Text::new("Collecting data...", Point::new(10, 70), value_style).draw(display);
-        return;
+        Text::new("Collecting data...", Point::new(10, 70), value_style).draw(display)?;
+        return Ok(());
     }
 
     let max_val = history.iter().max().copied().unwrap_or(1);
     let now_val = history.last().copied().unwrap_or(0);
 
     let mut s: String<16> = String::new();
-    let _ = write!(s, "now: {} max: {}", now_val, max_val);
-    let _ = Text::new(&s, Point::new(160, 30), value_style).draw(display);
+    write!(s, "now: {} max: {}", now_val, max_val).ok();
+    Text::new(&s, Point::new(160, 30), value_style).draw(display)?;
 
     const SAMPLES_PER_HOUR: usize = MAX_HISTORY / HISTORY_HOURS;
     let current_len = history.len();
@@ -249,12 +258,13 @@ fn draw_hourly_view<T>(
         let color = get_aqi_color(avg_val);
 
         for x in (x_center - BAR_HALF_WIDTH)..(x_center + BAR_HALF_WIDTH) {
-            let _ = Line::new(Point::new(x, GRAPH_BOTTOM), Point::new(x, y))
+            Line::new(Point::new(x, GRAPH_BOTTOM), Point::new(x, y))
                 .into_styled(PrimitiveStyle::with_stroke(color, 1))
-                .draw(display);
-            let _ = Line::new(Point::new(x, y - 1), Point::new(x, 50))
+                .draw(display)?;
+            Line::new(Point::new(x, y - 1), Point::new(x, 50))
                 .into_styled(PrimitiveStyle::with_stroke(Rgb565::BLACK, 1))
-                .draw(display);
+                .draw(display)?;
         }
     }
+    Ok(())
 }
