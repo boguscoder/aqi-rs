@@ -14,7 +14,6 @@ use esp_backtrace as _;
 use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::ledc::{channel, LowSpeed};
 use esp_hal::{
-    delay::Delay,
     gpio::{Input, InputConfig, Pull},
     time::Instant,
     uart::{Config, Uart},
@@ -23,7 +22,7 @@ use esp_hal::{interrupt::software::SoftwareInterruptControl, timer::timg::TimerG
 use heapless::Vec;
 use sensor::{Pms5003, PmsReading};
 use waveshare_display::{
-    init_display, setup_backlight, DisplayConfig, LandscapeDisplay, DISPLAY_HEIGHT, DISPLAY_WIDTH,
+    init_display, setup_backlight, LandscapeDisplay, DISPLAY_HEIGHT, DISPLAY_WIDTH,
 };
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -127,25 +126,18 @@ async fn main(spawner: Spawner) -> ! {
             .into_async(),
     );
 
-    setup_backlight!(peripherals.LEDC, peripherals.GPIO22, backlight_channel);
-    backlight_channel.set_duty(BACKLIGHT_BRIGHTNESS).unwrap();
+    setup_backlight!(
+        peripherals.LEDC,
+        peripherals.GPIO22,
+        backlight_channel,
+        BACKLIGHT_BRIGHTNESS
+    );
 
     spawner.spawn(button_task(button).unwrap());
     spawner.spawn(sensor_task(pms).unwrap());
     spawner.spawn(backlight_task(backlight_channel).unwrap());
 
-    let mut delay = Delay::new();
-    let mut display = init_display(
-        DisplayConfig {
-            spi: peripherals.SPI2,
-            mosi: peripherals.GPIO6.into(),
-            sclk: peripherals.GPIO7.into(),
-            cs: peripherals.GPIO14.into(),
-            dc: peripherals.GPIO15.into(),
-            rst: peripherals.GPIO21.into(),
-        },
-        &mut delay,
-    );
+    let mut display = init_display!(peripherals: peripherals);
 
     let mut history: Vec<u16, MAX_HISTORY> = Vec::new();
     let framebuffer: [Rgb565; (DISPLAY_WIDTH * DISPLAY_HEIGHT) as usize] =
