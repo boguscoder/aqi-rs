@@ -19,6 +19,7 @@ embassy-sync = "0.8.0"
 
 heapless = "0.8.0"
 
+waveshare_button = { path = "../waveshare_button" }
 waveshare_display = { path = "../waveshare_display" }
 
 [profile.dev]

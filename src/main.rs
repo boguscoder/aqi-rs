@@ -13,14 +13,14 @@ use embedded_graphics_framebuf::FrameBuf;
 use esp_backtrace as _;
 use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::ledc::{channel, LowSpeed};
+use esp_hal::{interrupt::software::SoftwareInterruptControl, timer::timg::TimerGroup};
 use esp_hal::{
-    gpio::{Input, InputConfig, Pull},
     time::Instant,
     uart::{Config, Uart},
 };
-use esp_hal::{interrupt::software::SoftwareInterruptControl, timer::timg::TimerGroup};
 use heapless::Vec;
 use sensor::{Pms5003, PmsReading};
+use waveshare_button::{button_task, ButtonEvent, BUTTON_EVENTS};
 use waveshare_display::{
     init_display, setup_backlight, LandscapeDisplay, DISPLAY_HEIGHT, DISPLAY_WIDTH,
 };
@@ -37,7 +37,6 @@ const HISTORY_HOURS: usize = 24;
 const SAMPLE_INTERVAL_SECS: u64 = 5;
 const MAX_HISTORY: usize = HISTORY_HOURS * 60 * (60 / SAMPLE_INTERVAL_SECS as usize);
 
-static BUTTON_PRESSED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static SENSOR_CHANNEL: Signal<CriticalSectionRawMutex, PmsReading> = Signal::new();
 static BACKLIGHT_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
@@ -57,22 +56,6 @@ async fn backlight_task(backlight: channel::Channel<'static, LowSpeed>) {
             BACKLIGHT_WAKE.wait().await;
             backlight.set_duty(BACKLIGHT_BRIGHTNESS).unwrap();
         }
-    }
-}
-
-#[embassy_executor::task]
-async fn button_task(mut button: Input<'static>) {
-    loop {
-        button.wait_for_falling_edge().await;
-        BUTTON_PRESSED.signal(());
-        BACKLIGHT_WAKE.signal(());
-        // Debounce the press
-        Timer::after(Duration::from_millis(50)).await;
-        while button.is_low() {
-            Timer::after(Duration::from_millis(10)).await;
-        }
-        // Debounce the release
-        Timer::after(Duration::from_millis(20)).await;
     }
 }
 
@@ -113,11 +96,6 @@ async fn main(spawner: Spawner) -> ! {
     let sw_intr = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_intr.software_interrupt0);
 
-    let button = Input::new(
-        peripherals.GPIO9,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-
     let pms = Pms5003::new(
         Uart::new(peripherals.UART1, Config::default().with_baudrate(9600))
             .unwrap()
@@ -133,7 +111,7 @@ async fn main(spawner: Spawner) -> ! {
         BACKLIGHT_BRIGHTNESS
     );
 
-    spawner.spawn(button_task(button).unwrap());
+    spawner.spawn(button_task(peripherals.GPIO9.into()).unwrap());
     spawner.spawn(sensor_task(pms).unwrap());
     spawner.spawn(backlight_task(backlight_channel).unwrap());
 
@@ -160,9 +138,10 @@ async fn main(spawner: Spawner) -> ! {
         let now = Instant::now();
         let mut sample_ready = false;
 
-        if let Some(()) = BUTTON_PRESSED.try_take() {
+        if matches!(BUTTON_EVENTS.try_take(), Some(ButtonEvent::ShortPress)) {
             current_view = current_view.next();
             force_redraw = true;
+            BACKLIGHT_WAKE.signal(());
         }
 
         if let Some(frame) = SENSOR_CHANNEL.try_take() {
